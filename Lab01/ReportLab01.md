@@ -12,15 +12,12 @@
 
 ## Task 1: Data Preprocessing
 
-We began by importing the dataset from the provided CSV. To ensure data quality, we performed the following steps:
+The dataset from CICIDS2017 was preprocessed by removing noisy and irrelevant entries:
 
-- Removed **duplicate entries**
-- Removed **rows with NaN or Inf values**
-- Dropped **irrelevant columns**, e.g., features with no variance across classes (e.g., `Fwd PSH Flags`)
-- Explored the **distribution of each feature**, grouped by class label (Benign, PortScan, DoS Hulk, Brute Force)
-- Identified and excluded features that were highly correlated with labels in a trivial way (e.g., `SYN Flag Count`)
-- Split the data: **60% train**, **20% validation**, **20% test**
-- Applied **standardization** using `StandardScaler` based on the training data
+- Dropped duplicates and rows with NaN or infinite values.
+- Visualized feature distributions across classes to identify features with trivial correlation (e.g., flags).
+- Removed irrelevant features (e.g., `Fwd PSH Flags`) when they provided trivial separation.
+- Normalized using `StandardScaler` and split into training (60%), validation (20%), and test (20%).
 
 ```python
 scaler = StandardScaler()
@@ -33,106 +30,87 @@ X_test_scaled = scaler.transform(X_test)
 
 ## Task 2: Shallow Neural Network
 
-We trained a single-layer FFNN with various neuron configurations: **32**, **64**, and **128**, using the following setup:
+Implemented a single-layer FFNN with varying neuron sizes:
 
-- Activation: **Linear** (initial test), then switched to **ReLU**
+- Neurons per layer: **32, 64, 128**
+- Batch size: **64**, Epochs: **100**
+- Activation: **Linear → ReLU**
 - Optimizer: **AdamW**
-- Loss Function: **CrossEntropyLoss**
-- Batch Size: **64**
-- Learning Rate: **0.0005**
-- Epochs: **100** with **early stopping**
+- Loss: **CrossEntropy**
 
-Performance was poor with **Linear activation**, significantly improved with **ReLU**.
+We observed overfitting with Linear, and better generalization with ReLU.
 
 ```python
 model = nn.Sequential(
-    nn.Linear(input_dim, 128),
+    nn.Linear(input_size, 64),
     nn.ReLU(),
-    nn.Linear(128, num_classes)
+    nn.Linear(64, num_classes)
 )
 ```
 
-We monitored the **loss curves** and selected the best model using **validation loss**. Test accuracy remained limited due to class imbalance and overfitting on dominant classes.
+Model selection was based on validation accuracy. Test F1-scores were poor due to class imbalance.
 
 ---
 
-## Task 3: Feature Bias – Destination Port
+## Task 3: Impact of Specific Features
 
-We observed that **Brute Force attacks always targeted port 80**. To test this inductive bias:
+### 🔹 Port as Bias Feature
+All Brute Force attacks occurred on **port 80**. We tested model generalization by changing ports to 8080 in the test set. The accuracy dropped, showing overfitting to this port.
 
-- We **replaced port 80 with 8080** for Brute Force attacks in the test set
-- Performance dropped, confirming the model was overfitting on the port feature
+### 🔹 Removing Port Feature
+After dropping the port feature:
+- Significant drop in **PortScan** instances due to duplicates
+- Dataset became more balanced
+- Training repeated with best model from previous task
 
-We then **removed the Destination Port** feature entirely and repeated preprocessing. Class balance changed notably:
-
-- **PortScan** class instances reduced significantly due to duplicates with identical ports
-
-To address class imbalance, we trained using **class weights** via `compute_class_weight` from `sklearn`.
-
+### 🔹 Weighted Loss
+To handle imbalance:
 ```python
 weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
 loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(weights).float())
 ```
 
-This improved the **F1 score** across minority classes and overall classification performance.
+Improved F1-scores, especially for rare classes like **Brute Force**.
 
 ---
 
 ## Task 4: Deep Neural Network
 
-We extended the architecture to **2–5 layers** using varying neuron configurations (e.g., 32-16, 64-32-16).
+Tested deeper FFNNs with 2–5 layers and hidden units: `[16, 8, 4, 2]`, etc.
 
-### Best Configuration:
-
-- Layers: 3  
-- Structure: `[64, 32, 16]`
 - Activation: **ReLU**
-- Batch Size: **64**
 - Optimizer: **AdamW**
+- Batch size: **64**
+- Best model had **3 layers**: `[32, 16, 8]`
 
-Validation and test accuracy improved significantly. The deeper network captured more complex patterns while maintaining generalization.
+### 🔸 Impact of Batch Size
+- Small batches led to more noise but better generalization
+- Larger batches trained faster but slightly overfit
 
-### Batch Size Impact
+### 🔸 Activation Functions
+Compared **ReLU**, **Sigmoid**, **Linear**:
 
-Tested batch sizes: 1, 32, 64, 128, 512. Results:
+- **ReLU** performed best due to non-linearity and gradient stability.
+- **Sigmoid** slowed down training.
+- **Linear** performed poorly.
 
-- **Small batches (1, 32)** led to noisy training but sometimes better generalization
-- **Large batches (128, 512)** trained faster but were prone to overfitting
-
-### Activation Function Impact
-
-Compared **Linear**, **Sigmoid**, and **ReLU**:
-
-- **ReLU** yielded the best results
-- **Sigmoid** caused vanishing gradients, slower training
-- **Linear** lacked non-linearity and resulted in underfitting
-
-### Optimizer Impact
-
+### 🔸 Optimizer Impact
 Compared:
-
 - **SGD**
-- **SGD with Momentum (0.1, 0.5, 0.9)**
+- **SGD + Momentum (0.1, 0.5, 0.9)**
 - **AdamW**
 
-**AdamW** consistently outperformed in convergence speed and final accuracy. Learning rate and epoch tuning confirmed the best configuration.
+AdamW was most efficient and achieved best convergence. SGD required more tuning.
 
 ---
 
 ## Task 5: Overfitting and Regularization
 
-We trained a deep FFNN with the following architecture:
+A deeper model `[256, 128, 64, 32, 16]` was trained:
 
-- Layers: `[256, 128, 64, 32, 16]`
-- Batch Size: **128**
-- Optimizer: **AdamW**
-- Epochs: **50**
-- Regularization: **None initially**
-
-### Observations:
-
-- The model **overfitted** quickly (training loss ↓, val loss ↑)
-- We introduced **Dropout** and **BatchNorm**, and used **weight decay** (AdamW)
+- Overfit without regularization (val loss ↑, train loss ↓)
+- Added **Dropout(0.5)** and **BatchNorm**
+- Used **weight_decay=0.01** in AdamW
 
 ```python
 nn.Sequential(
@@ -143,20 +121,18 @@ nn.Sequential(
 )
 ```
 
-### Final Results:
-
-- Dropout + BatchNorm significantly improved generalization
-- Best performance achieved with **Dropout(0.5)** and **weight decay = 0.01**
+Regularization significantly improved validation accuracy and prevented overfitting.
 
 ---
 
-## Conclusions
+## Conclusion
 
-This lab introduced us to:
+This lab demonstrated:
 
-- Building FFNNs with PyTorch
-- Handling data imbalance and bias
-- Testing architectural variations (depth, batch size, activations, optimizers)
-- Applying regularization to mitigate overfitting
+- Preprocessing steps to ensure clean training data
+- Limitations of shallow networks and advantages of deeper FFNNs
+- How dataset features and imbalance affect generalization
+- The role of batch size, activation function, optimizer, and regularization in improving performance
 
-The iterative approach helped refine our model and improve classification of minority classes, a key aspect in cybersecurity applications.
+The final model was robust and achieved good classification scores across all classes, including rare ones.
+
